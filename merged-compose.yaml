@@ -1,0 +1,1361 @@
+name: opentelemetry-demo
+services:
+  ad:
+    build:
+      context: /home/azureuser/opentelemetry-demo
+      dockerfile: ./src/ad/Dockerfile
+      args:
+        OTEL_JAVA_AGENT_VERSION: 2.30.0
+      cache_from:
+        - ghcr.io/open-telemetry/demo:3.0.0-ad
+    container_name: ad
+    depends_on:
+      flagd:
+        condition: service_started
+        required: true
+      otel-collector:
+        condition: service_started
+        required: true
+    deploy:
+      resources:
+        limits:
+          memory: "314572800"
+    environment:
+      _JAVA_OPTIONS: null
+      AD_PORT: "9555"
+      AD_PROMETHEUS_PORT: "9465"
+      FLAGD_HOST: flagd
+      FLAGD_PORT: "8013"
+      OTEL_EXPERIMENTAL_SDK_TELEMETRY_VERSION: latest
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE: cumulative
+      OTEL_LOGS_EXPORTER: otlp
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.0.0,service.criticality=medium
+      OTEL_SERVICE_NAME: ad
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - bash -c 'echo > /dev/tcp/localhost/9555'
+      timeout: 5s
+      interval: 5s
+      retries: 20
+      start_period: 20s
+    image: ghcr.io/open-telemetry/demo:latest-ad
+    logging:
+      driver: json-file
+      options:
+        max-file: "2"
+        max-size: 5m
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 9555
+        protocol: tcp
+      - mode: ingress
+        target: 9465
+        protocol: tcp
+    restart: unless-stopped
+  astronomy-db:
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+    container_name: astronomy-db
+    deploy:
+      resources:
+        limits:
+          memory: "83886080"
+    environment:
+      POSTGRES_PASSWORD: changeit
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready
+      timeout: 5s
+      interval: 5s
+      retries: 10
+      start_period: 10s
+    image: postgres:18.4
+    logging:
+      driver: json-file
+      options:
+        max-file: "2"
+        max-size: 5m
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 5432
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /home/azureuser/opentelemetry-demo/src/postgresql/init.sql
+        target: /docker-entrypoint-initdb.d/init.sql
+        bind: {}
+  cart:
+    build:
+      context: /home/azureuser/opentelemetry-demo
+      dockerfile: ./src/cart/src/Dockerfile
+      cache_from:
+        - ghcr.io/open-telemetry/demo:3.0.0-cart
+    container_name: cart
+    depends_on:
+      flagd:
+        condition: service_started
+        required: true
+      opamp-server:
+        condition: service_healthy
+        required: true
+      otel-collector:
+        condition: service_started
+        required: true
+      valkey-cart:
+        condition: service_healthy
+        required: true
+    deploy:
+      resources:
+        limits:
+          memory: "167772160"
+    environment:
+      ASPNETCORE_URLS: http://*:7070
+      CART_PORT: "7070"
+      FLAGD_HOST: flagd
+      FLAGD_PORT: "8013"
+      OPAMP_SERVER_ENDPOINT: wss://opamp-server:4320/v1/opamp
+      OPAMP_SERVER_TLS_INSECURE_SKIP_VERIFY: "true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE: cumulative
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.0.0,service.criticality=high
+      OTEL_SERVICE_NAME: cart
+      VALKEY_ADDR: valkey-cart:6379
+    image: ghcr.io/open-telemetry/demo:latest-cart
+    logging:
+      driver: json-file
+      options:
+        max-file: "2"
+        max-size: 5m
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 7070
+        protocol: tcp
+    restart: unless-stopped
+  checkout:
+    build:
+      context: /home/azureuser/opentelemetry-demo
+      dockerfile: ./src/checkout/Dockerfile
+      cache_from:
+        - ghcr.io/open-telemetry/demo:3.0.0-checkout
+    container_name: checkout
+    depends_on:
+      cart:
+        condition: service_started
+        required: true
+      currency:
+        condition: service_healthy
+        required: true
+      email:
+        condition: service_healthy
+        required: true
+      flagd:
+        condition: service_started
+        required: true
+      otel-collector:
+        condition: service_started
+        required: true
+      payment:
+        condition: service_healthy
+        required: true
+      product-catalog:
+        condition: service_started
+        required: true
+      shipping:
+        condition: service_started
+        required: true
+    deploy:
+      resources:
+        limits:
+          memory: "20971520"
+    environment:
+      CART_ADDR: cart:7070
+      CHECKOUT_PORT: "5050"
+      CURRENCY_ADDR: currency:7001
+      EMAIL_ADDR: http://email:6060
+      FLAGD_HOST: flagd
+      FLAGD_PORT: "8013"
+      GOMEMLIMIT: 16MiB
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE: cumulative
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.0.0,service.criticality=critical
+      OTEL_SERVICE_NAME: checkout
+      PAYMENT_ADDR: payment:50051
+      PRODUCT_CATALOG_ADDR: product-catalog:3550
+      SHIPPING_ADDR: http://shipping:50050
+    healthcheck:
+      test:
+        - CMD
+        - /bin/grpc_health_probe
+        - -addr=:5050
+      timeout: 5s
+      interval: 5s
+      retries: 20
+      start_period: 10s
+    image: ghcr.io/open-telemetry/demo:latest-checkout
+    logging:
+      driver: json-file
+      options:
+        max-file: "2"
+        max-size: 5m
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 5050
+        protocol: tcp
+    read_only: true
+    restart: unless-stopped
+    tmpfs:
+      - /tmp
+  currency:
+    build:
+      context: /home/azureuser/opentelemetry-demo
+      dockerfile: ./src/currency/Dockerfile
+      args:
+        OPENTELEMETRY_CPP_VERSION: 1.27.0
+      cache_from:
+        - ghcr.io/open-telemetry/demo:3.0.0-currency
+    container_name: currency
+    depends_on:
+      otel-collector:
+        condition: service_started
+        required: true
+    deploy:
+      resources:
+        limits:
+          memory: "20971520"
+    environment:
+      CURRENCY_PORT: "7001"
+      IPV6_ENABLED: "false"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE: cumulative
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.0.0,service.criticality=high
+      OTEL_SERVICE_NAME: currency
+      VERSION: 3.0.0
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - nc -z localhost 7001
+      timeout: 5s
+      interval: 5s
+      retries: 20
+      start_period: 10s
+    image: ghcr.io/open-telemetry/demo:latest-currency
+    logging:
+      driver: json-file
+      options:
+        max-file: "2"
+        max-size: 5m
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 7001
+        protocol: tcp
+    restart: unless-stopped
+  email:
+    build:
+      context: /home/azureuser/opentelemetry-demo
+      dockerfile: ./src/email/Dockerfile
+      cache_from:
+        - ghcr.io/open-telemetry/demo:3.0.0-email
+    container_name: email
+    depends_on:
+      otel-collector:
+        condition: service_started
+        required: true
+    deploy:
+      resources:
+        limits:
+          memory: "104857600"
+    environment:
+      APP_ENV: production
+      EMAIL_PORT: "6060"
+      FLAGD_HOST: flagd
+      FLAGD_PORT: "8013"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE: cumulative
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.0.0,service.criticality=medium
+      OTEL_SERVICE_NAME: email
+    healthcheck:
+      test:
+        - CMD
+        - ruby
+        - -e
+        - require 'socket'; TCPSocket.new('localhost', 6060).close
+      timeout: 5s
+      interval: 5s
+      retries: 20
+      start_period: 10s
+    image: ghcr.io/open-telemetry/demo:latest-email
+    logging:
+      driver: json-file
+      options:
+        max-file: "2"
+        max-size: 5m
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 6060
+        protocol: tcp
+    restart: unless-stopped
+  flagd:
+    command:
+      - start
+      - --uri
+      - file:./etc/flagd/demo.flagd.json
+    container_name: flagd
+    deploy:
+      resources:
+        limits:
+          memory: "78643200"
+    environment:
+      GOMEMLIMIT: 60MiB
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.0.0,service.criticality=low
+      OTEL_SERVICE_NAME: flagd
+    image: ghcr.io/open-feature/flagd:v0.16.0
+    logging:
+      driver: json-file
+      options:
+        max-file: "2"
+        max-size: 5m
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 8013
+        protocol: tcp
+      - mode: ingress
+        target: 8016
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /home/azureuser/opentelemetry-demo/src/flagd
+        target: /etc/flagd
+        bind: {}
+  flagd-ui:
+    build:
+      context: /home/azureuser/opentelemetry-demo
+      dockerfile: ./src/flagd-ui/Dockerfile
+      cache_from:
+        - ghcr.io/open-telemetry/demo:3.0.0-flagd-ui
+    container_name: flagd-ui
+    depends_on:
+      flagd:
+        condition: service_started
+        required: true
+      otel-collector:
+        condition: service_started
+        required: true
+    deploy:
+      resources:
+        limits:
+          memory: "209715200"
+    environment:
+      FLAGD_UI_PORT: "4000"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE: cumulative
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.0.0,service.criticality=low
+      OTEL_SERVICE_NAME: flagd-ui
+      PHX_HOST: localhost
+      SECRET_KEY_BASE: yYrECL4qbNwleYInGJYvVnSkwJuSQJ4ijPTx5tirGUXrbznFIBFVJdPl5t6O9ASw
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - echo > /dev/tcp/localhost/4000
+      timeout: 5s
+      interval: 5s
+      retries: 20
+      start_period: 10s
+    image: ghcr.io/open-telemetry/demo:latest-flagd-ui
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 4000
+        protocol: tcp
+    restart: always
+    volumes:
+      - type: bind
+        source: /home/azureuser/opentelemetry-demo/src/flagd
+        target: /app/data
+        bind: {}
+  frontend:
+    build:
+      context: /home/azureuser/opentelemetry-demo
+      dockerfile: ./src/frontend/Dockerfile
+      cache_from:
+        - ghcr.io/open-telemetry/demo:3.0.0-frontend
+    container_name: frontend
+    depends_on:
+      ad:
+        condition: service_healthy
+        required: true
+      cart:
+        condition: service_started
+        required: true
+      checkout:
+        condition: service_started
+        required: true
+      currency:
+        condition: service_healthy
+        required: true
+      flagd:
+        condition: service_started
+        required: true
+      image-provider:
+        condition: service_healthy
+        required: true
+      otel-collector:
+        condition: service_started
+        required: true
+      product-catalog:
+        condition: service_started
+        required: true
+      quote:
+        condition: service_healthy
+        required: true
+      recommendation:
+        condition: service_healthy
+        required: true
+      shipping:
+        condition: service_started
+        required: true
+    deploy:
+      resources:
+        limits:
+          memory: "262144000"
+    environment:
+      AD_ADDR: ad:9555
+      CART_ADDR: cart:7070
+      CHECKOUT_ADDR: checkout:5050
+      CURRENCY_ADDR: currency:7001
+      ENV_PLATFORM: local
+      FLAGD_HOST: flagd
+      FLAGD_PORT: "8013"
+      FRONTEND_ADDR: frontend:8080
+      OTEL_COLLECTOR_HOST: otel-collector
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE: cumulative
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.0.0,service.criticality=critical
+      OTEL_SERVICE_NAME: frontend
+      PORT: "8080"
+      PRODUCT_CATALOG_ADDR: product-catalog:3550
+      PUBLIC_OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://localhost:8080/otlp-http/v1/traces
+      RECOMMENDATION_ADDR: recommendation:9001
+      SHIPPING_ADDR: http://shipping:50050
+      WEB_OTEL_SERVICE_NAME: frontend-web
+    healthcheck:
+      test:
+        - CMD
+        - /nodejs/bin/node
+        - -e
+        - require('net').connect(8080,require('os').hostname(),function(){process.exit(0)}).on('error',function(){process.exit(1)})
+      timeout: 10s
+      interval: 10s
+      retries: 5
+      start_period: 1m0s
+    image: ghcr.io/open-telemetry/demo:latest-frontend
+    logging:
+      driver: json-file
+      options:
+        max-file: "2"
+        max-size: 5m
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 8080
+        protocol: tcp
+    restart: unless-stopped
+  frontend-proxy:
+    build:
+      context: /home/azureuser/opentelemetry-demo
+      dockerfile: ./src/frontend-proxy/Dockerfile
+      cache_from:
+        - ghcr.io/open-telemetry/demo:3.0.0-frontend-proxy
+    container_name: frontend-proxy
+    depends_on:
+      flagd-ui:
+        condition: service_healthy
+        required: true
+      frontend:
+        condition: service_healthy
+        required: true
+      grafana:
+        condition: service_started
+        required: true
+      jaeger:
+        condition: service_started
+        required: true
+      opamp-server:
+        condition: service_healthy
+        required: true
+      telemetry-docs:
+        condition: service_healthy
+        required: true
+    deploy:
+      resources:
+        limits:
+          memory: "94371840"
+    dns_search:
+      - ""
+    environment:
+      CHATBOT_HOST: chatbot
+      CHATBOT_PORT: "7860"
+      ENVOY_ADDR: 0.0.0.0
+      ENVOY_ADMIN_PORT: "10000"
+      ENVOY_PORT: "8080"
+      FIREPIT_HOST: firepit
+      FIREPIT_PORT: "8080"
+      FLAGD_HOST: flagd
+      FLAGD_PORT: "8013"
+      FLAGD_UI_HOST: flagd-ui
+      FLAGD_UI_PORT: "4000"
+      FRONTEND_HOST: frontend
+      FRONTEND_PORT: "8080"
+      GRAFANA_HOST: grafana
+      GRAFANA_PORT: "3000"
+      IMAGE_PROVIDER_HOST: image-provider
+      IMAGE_PROVIDER_PORT: "8081"
+      JAEGER_HOST: jaeger
+      JAEGER_UI_PORT: "16686"
+      OPAMP_SERVER_HOST: opamp-server
+      OPAMP_SERVER_UI_PORT: "4321"
+      OTEL_COLLECTOR_HOST: otel-collector
+      OTEL_COLLECTOR_PORT_GRPC: "4317"
+      OTEL_COLLECTOR_PORT_HTTP: "4318"
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.0.0,service.criticality=critical
+      OTEL_SERVICE_NAME: frontend-proxy
+      OTEL_SERVICE_NAMESPACE: opentelemetry-demo
+      TELEMETRY_DOCS_HOST: telemetry-docs
+      TELEMETRY_DOCS_PORT: "8000"
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - echo > /dev/tcp/localhost/8080
+      timeout: 5s
+      interval: 5s
+      retries: 20
+      start_period: 10s
+    image: ghcr.io/open-telemetry/demo:latest-frontend-proxy
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 8080
+        published: "8080"
+        protocol: tcp
+      - mode: ingress
+        target: 10000
+        published: "10000"
+        protocol: tcp
+    restart: unless-stopped
+  grafana:
+    container_name: grafana
+    deploy:
+      resources:
+        limits:
+          memory: "1073741824"
+    environment:
+      GF_INSTALL_PLUGINS: grafana-opensearch-datasource
+    image: grafana/grafana:13.1.0
+    logging:
+      driver: json-file
+      options:
+        max-file: "2"
+        max-size: 5m
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 3000
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /home/azureuser/opentelemetry-demo/src/grafana/grafana.ini
+        target: /etc/grafana/grafana.ini
+        bind: {}
+      - type: bind
+        source: /home/azureuser/opentelemetry-demo/src/grafana/provisioning
+        target: /etc/grafana/provisioning
+        bind: {}
+  image-provider:
+    build:
+      context: /home/azureuser/opentelemetry-demo
+      dockerfile: ./src/image-provider/Dockerfile
+      cache_from:
+        - ghcr.io/open-telemetry/demo:3.0.0-image-provider
+    container_name: image-provider
+    depends_on:
+      otel-collector:
+        condition: service_started
+        required: true
+    deploy:
+      resources:
+        limits:
+          memory: "125829120"
+    environment:
+      IMAGE_PROVIDER_PORT: "8081"
+      OTEL_COLLECTOR_HOST: otel-collector
+      OTEL_COLLECTOR_PORT_GRPC: "4317"
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.0.0,service.criticality=low
+      OTEL_SERVICE_NAME: image-provider
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - --quiet
+        - --tries=1
+        - --spider
+        - http://localhost:8081/status
+      timeout: 5s
+      interval: 5s
+      retries: 20
+      start_period: 10s
+    image: ghcr.io/open-telemetry/demo:latest-image-provider
+    logging:
+      driver: json-file
+      options:
+        max-file: "2"
+        max-size: 5m
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 8081
+        protocol: tcp
+    restart: unless-stopped
+  jaeger:
+    command:
+      - --config=file:/etc/jaeger/config.yml
+    container_name: jaeger
+    deploy:
+      resources:
+        limits:
+          memory: "1258291200"
+    environment:
+      JAEGER_GRPC_PORT: "4317"
+      JAEGER_HOST: jaeger
+      MEMORY_MAX_TRACES: "25000"
+      OTEL_COLLECTOR_HOST: otel-collector
+      OTEL_COLLECTOR_PORT_HTTP: "4318"
+      PROMETHEUS_ADDR: prometheus:9090
+    image: quay.io/jaegertracing/jaeger:2.19.0
+    logging:
+      driver: json-file
+      options:
+        max-file: "2"
+        max-size: 5m
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 16686
+        protocol: tcp
+      - mode: ingress
+        target: 4317
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /home/azureuser/opentelemetry-demo/src/jaeger/config.yml
+        target: /etc/jaeger/config.yml
+        bind: {}
+      - type: bind
+        source: /home/azureuser/opentelemetry-demo/src/jaeger/ui-config.json
+        target: /etc/jaeger/ui-config.json
+        bind: {}
+  load-generator:
+    build:
+      context: /home/azureuser/opentelemetry-demo
+      dockerfile: ./src/load-generator/Dockerfile
+      cache_from:
+        - ghcr.io/open-telemetry/demo:3.0.0-load-generator
+    container_name: load-generator
+    depends_on:
+      flagd:
+        condition: service_started
+        required: true
+      frontend:
+        condition: service_healthy
+        required: true
+      frontend-proxy:
+        condition: service_healthy
+        required: true
+    deploy:
+      resources:
+        limits:
+          memory: "536870912"
+    environment:
+      FLAGD_HOST: flagd
+      FLAGD_OFREP_PORT: "8016"
+      FLAGD_PORT: "8013"
+      K6_BROWSER_ARGS: no-sandbox,disable-dev-shm-usage
+      K6_BROWSER_ENABLED: "true"
+      K6_OTEL_EXPORTER_PROTOCOL: http/protobuf
+      K6_OTEL_HTTP_EXPORTER_ENDPOINT: otel-collector:4318
+      K6_OTEL_HTTP_EXPORTER_INSECURE: "true"
+      K6_OTEL_METRIC_PREFIX: k6.
+      K6_TARGET_URL: http://frontend-proxy:8080
+      LOAD_GENERATOR_VUS: "5"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.0.0,service.criticality=low
+      OTEL_SERVICE_NAME: load-generator
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pgrep k6
+      timeout: 5s
+      interval: 5s
+      retries: 5
+      start_period: 10s
+    image: ghcr.io/open-telemetry/demo:latest-load-generator
+    logging:
+      driver: json-file
+      options:
+        max-file: "2"
+        max-size: 5m
+    networks:
+      default: null
+    restart: unless-stopped
+  loki:
+    command:
+      - -config.file=/etc/loki/loki.yaml
+    image: grafana/loki:latest
+    networks:
+      opentelemetry-demo: null
+    volumes:
+      - type: volume
+        source: loki-data
+        target: /loki
+        volume: {}
+      - type: bind
+        source: /home/azureuser/opentelemetry-demo/lgtm/loki/loki.yaml
+        target: /etc/loki/loki.yaml
+        read_only: true
+        bind: {}
+  mimir:
+    command:
+      - -config.file=/etc/mimir/mimir.yaml
+    image: grafana/mimir:latest
+    networks:
+      opentelemetry-demo: null
+    volumes:
+      - type: volume
+        source: mimir-data
+        target: /data/mimir
+        volume: {}
+      - type: bind
+        source: /home/azureuser/opentelemetry-demo/lgtm/mimir/mimir.yaml
+        target: /etc/mimir/mimir.yaml
+        read_only: true
+        bind: {}
+  opamp-server:
+    build:
+      context: /home/azureuser/opentelemetry-demo
+      dockerfile: ./src/opamp-server/Dockerfile
+      args:
+        OPAMP_GO_REF: fc016b0599ee6cb5ba479452055a3370e7238aaa
+      cache_from:
+        - ghcr.io/open-telemetry/demo:3.0.0-opamp-server
+    container_name: opamp-server
+    deploy:
+      resources:
+        limits:
+          memory: "68157440"
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - --quiet
+        - --tries=1
+        - --spider
+        - http://localhost:4321/
+      timeout: 5s
+      interval: 5s
+      retries: 10
+      start_period: 10s
+    image: ghcr.io/open-telemetry/demo:latest-opamp-server
+    logging:
+      driver: json-file
+      options:
+        max-file: "2"
+        max-size: 5m
+    networks:
+      default: null
+    restart: unless-stopped
+  opensearch:
+    build:
+      context: /home/azureuser/opentelemetry-demo
+      dockerfile: ./src/opensearch/Dockerfile
+      cache_from:
+        - ghcr.io/open-telemetry/demo:3.0.0-opensearch
+    container_name: opensearch
+    deploy:
+      resources:
+        limits:
+          memory: "1073741824"
+    environment:
+      _JAVA_OPTIONS: null
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      DISABLE_SECURITY_PLUGIN: "true"
+      OPENSEARCH_JAVA_OPTS: -Xms400m -Xmx400m
+      bootstrap.memory_lock: "true"
+      cluster.name: demo-cluster
+      discovery.type: single-node
+      node.name: demo-node
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl -s http://localhost:9200/_cluster/health | grep -E '"status":"(green|yellow)"'
+      timeout: 10s
+      interval: 5s
+      retries: 10
+      start_period: 10s
+    image: ghcr.io/open-telemetry/demo:latest-opensearch
+    logging:
+      driver: json-file
+      options:
+        max-file: "2"
+        max-size: 5m
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 9200
+        protocol: tcp
+    restart: unless-stopped
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+  otel-collector:
+    command:
+      - --config=/etc/otelcol-config.yml
+      - --config=/etc/otelcol-config-full.yml
+      - --config=/etc/otelcol-config-observability.yml
+      - --config=/etc/otelcol-config-lgtm.yml
+      - --config=/etc/otelcol-config-extras.yml
+      - --feature-gates=service.profilesSupport
+    container_name: otel-collector
+    depends_on:
+      jaeger:
+        condition: service_started
+        required: true
+      loki:
+        condition: service_started
+        required: true
+      mimir:
+        condition: service_started
+        required: true
+      opamp-server:
+        condition: service_healthy
+        required: true
+      opensearch:
+        condition: service_healthy
+        required: true
+      tempo:
+        condition: service_started
+        required: true
+    deploy:
+      resources:
+        limits:
+          memory: "419430400"
+    environment:
+      AD_PROMETHEUS_PORT: "9465"
+      FRONTEND_PROXY_ADDR: frontend-proxy:8080
+      GOMEMLIMIT: 160MiB
+      HOST_FILESYSTEM: /
+      IMAGE_PROVIDER_HOST: image-provider
+      IMAGE_PROVIDER_PORT: "8081"
+      KAFKA_ADDR: kafka:9092
+      OTEL_COLLECTOR_HOST: otel-collector
+      OTEL_COLLECTOR_PORT_GRPC: "4317"
+      OTEL_COLLECTOR_PORT_HTTP: "4318"
+      POSTGRES_HOST: astronomy-db
+      POSTGRES_MONITORING_PASSWORD: monitoring_password
+      POSTGRES_PORT: "5432"
+    image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.157.0
+    logging:
+      driver: json-file
+      options:
+        max-file: "2"
+        max-size: 5m
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 4317
+        protocol: tcp
+      - mode: ingress
+        target: 4318
+        protocol: tcp
+    restart: unless-stopped
+    user: '0:0'
+    volumes:
+      - type: bind
+        source: /
+        target: /hostfs
+        read_only: true
+        bind: {}
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        read_only: true
+        bind: {}
+      - type: bind
+        source: /home/azureuser/opentelemetry-demo/src/otel-collector/otelcol-config.yml
+        target: /etc/otelcol-config.yml
+        bind: {}
+      - type: bind
+        source: /home/azureuser/opentelemetry-demo/src/otel-collector/otelcol-config-extras.yml
+        target: /etc/otelcol-config-extras.yml
+        bind: {}
+      - type: bind
+        source: /home/azureuser/opentelemetry-demo/src/otel-collector/otelcol-config-full.yml
+        target: /etc/otelcol-config-full.yml
+        bind: {}
+      - type: bind
+        source: /home/azureuser/opentelemetry-demo/src/otel-collector/otelcol-config-observability.yml
+        target: /etc/otelcol-config-observability.yml
+        bind: {}
+      - type: bind
+        source: /home/azureuser/opentelemetry-demo/src/otel-collector/otelcol-config-lgtm.yml
+        target: /etc/otelcol-config-lgtm.yml
+        read_only: true
+        bind: {}
+  payment:
+    build:
+      context: /home/azureuser/opentelemetry-demo
+      dockerfile: ./src/payment/Dockerfile
+      cache_from:
+        - ghcr.io/open-telemetry/demo:3.0.0-payment
+    container_name: payment
+    depends_on:
+      flagd:
+        condition: service_started
+        required: true
+      otel-collector:
+        condition: service_started
+        required: true
+    deploy:
+      resources:
+        limits:
+          memory: "146800640"
+    environment:
+      FLAGD_HOST: flagd
+      FLAGD_PORT: "8013"
+      IPV6_ENABLED: "false"
+      NODE_OPTIONS: --require @opentelemetry/auto-instrumentations-node/register
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE: cumulative
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.0.0,service.criticality=critical
+      OTEL_SERVICE_NAME: payment
+      PAYMENT_PORT: "50051"
+    healthcheck:
+      test:
+        - CMD
+        - /nodejs/bin/node
+        - -e
+        - const net=require('net');const c=new net.Socket(); c.setTimeout(2000); c.connect(50051,'127.0.0.1',()=>{c.destroy();process.exit(0)});
+          c.on('error',()=>process.exit(1)); c.on('timeout',()=>process.exit(1))
+      timeout: 5s
+      interval: 5s
+      retries: 20
+      start_period: 10s
+    image: ghcr.io/open-telemetry/demo:latest-payment
+    logging:
+      driver: json-file
+      options:
+        max-file: "2"
+        max-size: 5m
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 50051
+        protocol: tcp
+    restart: unless-stopped
+  product-catalog:
+    build:
+      context: /home/azureuser/opentelemetry-demo
+      dockerfile: ./src/product-catalog/Dockerfile
+      cache_from:
+        - ghcr.io/open-telemetry/demo:3.0.0-product-catalog
+    container_name: product-catalog
+    depends_on:
+      astronomy-db:
+        condition: service_healthy
+        required: true
+      flagd:
+        condition: service_started
+        required: true
+      otel-collector:
+        condition: service_started
+        required: true
+    deploy:
+      resources:
+        limits:
+          memory: "20971520"
+    environment:
+      DB_CONNECTION_STRING: postgres://astronomy_user:astronomy_password@astronomy-db/astronomy_db?sslmode=disable
+      FLAGD_HOST: flagd
+      FLAGD_PORT: "8013"
+      GOMEMLIMIT: 16MiB
+      OTEL_CONFIG_FILE: /otel-config.yml
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE: cumulative
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.0.0,service.criticality=high
+      OTEL_SEMCONV_STABILITY_OPT_IN: database
+      OTEL_SERVICE_NAME: product-catalog
+      PRODUCT_CATALOG_PORT: "3550"
+    healthcheck:
+      test:
+        - CMD
+        - /bin/grpc_health_probe
+        - -addr=:3550
+      timeout: 5s
+      interval: 5s
+      retries: 20
+      start_period: 10s
+    image: ghcr.io/open-telemetry/demo:latest-product-catalog
+    logging:
+      driver: json-file
+      options:
+        max-file: "2"
+        max-size: 5m
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 3550
+        protocol: tcp
+    read_only: true
+    restart: unless-stopped
+    tmpfs:
+      - /tmp
+    volumes:
+      - type: bind
+        source: /home/azureuser/opentelemetry-demo/otel-config.yml
+        target: /otel-config.yml
+        bind: {}
+  prometheus:
+    command:
+      - --web.console.templates=/etc/prometheus/consoles
+      - --web.console.libraries=/etc/prometheus/console_libraries
+      - --storage.tsdb.retention.time=7d
+      - --config.file=/etc/prometheus/prometheus-config.yaml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+      - --web.route-prefix=/
+      - --web.enable-otlp-receiver
+      - --enable-feature=exemplar-storage
+    container_name: prometheus
+    deploy:
+      resources:
+        limits:
+          memory: "524288000"
+    image: quay.io/prometheus/prometheus:v3.13.1
+    logging:
+      driver: json-file
+      options:
+        max-file: "2"
+        max-size: 5m
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 9090
+        published: "9090"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /home/azureuser/opentelemetry-demo/src/prometheus/prometheus-config.yaml
+        target: /etc/prometheus/prometheus-config.yaml
+        bind: {}
+  quote:
+    build:
+      context: /home/azureuser/opentelemetry-demo
+      dockerfile: ./src/quote/Dockerfile
+      cache_from:
+        - ghcr.io/open-telemetry/demo:3.0.0-quote
+    container_name: quote
+    depends_on:
+      otel-collector:
+        condition: service_started
+        required: true
+    deploy:
+      resources:
+        limits:
+          memory: "41943040"
+    environment:
+      IPV6_ENABLED: "false"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE: cumulative
+      OTEL_PHP_AUTOLOAD_ENABLED: "true"
+      OTEL_PHP_INTERNAL_METRICS_ENABLED: "true"
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.0.0,service.criticality=low
+      OTEL_SERVICE_NAME: quote
+      QUOTE_PORT: "8090"
+    healthcheck:
+      test:
+        - CMD
+        - php
+        - -r
+        - fsockopen('localhost', 8090) or die('fail');
+      timeout: 5s
+      interval: 5s
+      retries: 20
+      start_period: 10s
+    image: ghcr.io/open-telemetry/demo:latest-quote
+    logging:
+      driver: json-file
+      options:
+        max-file: "2"
+        max-size: 5m
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 8090
+        protocol: tcp
+    restart: unless-stopped
+  recommendation:
+    build:
+      context: /home/azureuser/opentelemetry-demo
+      dockerfile: ./src/recommendation/Dockerfile
+      cache_from:
+        - ghcr.io/open-telemetry/demo:3.0.0-recommendation
+    container_name: recommendation
+    depends_on:
+      flagd:
+        condition: service_started
+        required: true
+      otel-collector:
+        condition: service_started
+        required: true
+      product-catalog:
+        condition: service_started
+        required: true
+    deploy:
+      resources:
+        limits:
+          memory: "524288000"
+    environment:
+      FLAGD_HOST: flagd
+      FLAGD_PORT: "8013"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE: cumulative
+      OTEL_PYTHON_LOG_CORRELATION: "true"
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.0.0,service.criticality=medium
+      OTEL_SERVICE_NAME: recommendation
+      PRODUCT_CATALOG_ADDR: product-catalog:3550
+      PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION: python
+      RECOMMENDATION_PORT: "9001"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - nc -z localhost 9001
+      timeout: 5s
+      interval: 5s
+      retries: 20
+      start_period: 10s
+    image: ghcr.io/open-telemetry/demo:latest-recommendation
+    logging:
+      driver: json-file
+      options:
+        max-file: "2"
+        max-size: 5m
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 9001
+        protocol: tcp
+    restart: unless-stopped
+  shipping:
+    build:
+      context: /home/azureuser/opentelemetry-demo
+      dockerfile: ./src/shipping/Dockerfile
+      cache_from:
+        - ghcr.io/open-telemetry/demo:3.0.0-shipping
+    container_name: shipping
+    depends_on:
+      flagd:
+        condition: service_started
+        required: true
+      otel-collector:
+        condition: service_started
+        required: true
+    deploy:
+      resources:
+        limits:
+          memory: "20971520"
+    environment:
+      FLAGD_HOST: flagd
+      FLAGD_PORT: "8013"
+      IPV6_ENABLED: "false"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE: cumulative
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.0.0,service.criticality=high
+      OTEL_SERVICE_NAME: shipping
+      QUOTE_ADDR: http://quote:8090
+      SHIPPING_PORT: "50050"
+    healthcheck:
+      test:
+        - CMD
+        - /app/healthcheck
+      timeout: 5s
+      interval: 5s
+      retries: 20
+      start_period: 10s
+    image: ghcr.io/open-telemetry/demo:latest-shipping
+    logging:
+      driver: json-file
+      options:
+        max-file: "2"
+        max-size: 5m
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 50050
+        protocol: tcp
+    read_only: true
+    restart: unless-stopped
+    tmpfs:
+      - /tmp
+  telemetry-docs:
+    build:
+      context: /home/azureuser/opentelemetry-demo
+      dockerfile: ./src/telemetry-docs/Dockerfile
+      cache_from:
+        - ghcr.io/open-telemetry/demo:3.0.0-telemetry-docs
+    container_name: telemetry-docs
+    deploy:
+      resources:
+        limits:
+          memory: "104857600"
+    environment:
+      OTEL_COLLECTOR_HOST: otel-collector
+      OTEL_COLLECTOR_PORT_GRPC: "4317"
+      OTEL_SERVICE_NAME: telemetry-docs
+      TELEMETRY_DOCS_PORT: "8000"
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - --quiet
+        - --tries=1
+        - --spider
+        - http://localhost:8000/
+      timeout: 5s
+      interval: 5s
+      retries: 20
+      start_period: 10s
+    image: ghcr.io/open-telemetry/demo:latest-telemetry-docs
+    logging:
+      driver: json-file
+      options:
+        max-file: "2"
+        max-size: 5m
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 8000
+        protocol: tcp
+    restart: unless-stopped
+  tempo:
+    command:
+      - -config.file=/etc/tempo/tempo.yaml
+    image: grafana/tempo:latest
+    networks:
+      opentelemetry-demo: null
+    volumes:
+      - type: volume
+        source: tempo-data
+        target: /var/tempo
+        volume: {}
+      - type: bind
+        source: /home/azureuser/opentelemetry-demo/lgtm/tempo/tempo.yaml
+        target: /etc/tempo/tempo.yaml
+        read_only: true
+        bind: {}
+  valkey-cart:
+    container_name: valkey-cart
+    deploy:
+      resources:
+        limits:
+          memory: "20971520"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - valkey-cli ping
+      timeout: 3s
+      interval: 5s
+      retries: 10
+      start_period: 5s
+    image: ghcr.io/valkey-io/valkey:9.0.4-alpine3.23
+    logging:
+      driver: json-file
+      options:
+        max-file: "2"
+        max-size: 5m
+    networks:
+      default: null
+    ports:
+      - mode: ingress
+        target: 6379
+        protocol: tcp
+    restart: unless-stopped
+    user: valkey
+networks:
+  default:
+    name: opentelemetry-demo
+    driver: bridge
+  opentelemetry-demo:
+    name: opentelemetry-demo
+    external: true
+volumes:
+  loki-data:
+    name: opentelemetry-demo_loki-data
+  mimir-data:
+    name: opentelemetry-demo_mimir-data
+  tempo-data:
+    name: opentelemetry-demo_tempo-data
+x-default-logging:
+  driver: json-file
+  options:
+    max-file: "2"
+    max-size: 5m

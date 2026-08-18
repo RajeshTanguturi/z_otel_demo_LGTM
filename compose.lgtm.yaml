@@ -1,0 +1,64 @@
+services:
+
+  mimir:
+    image: grafana/mimir:latest
+    command:
+      - -config.file=/etc/mimir/mimir.yaml
+    volumes:
+      - mimir-data:/data/mimir
+      - ./lgtm/mimir/mimir.yaml:/etc/mimir/mimir.yaml:ro
+    networks:
+      - opentelemetry-demo
+
+  loki:
+    image: grafana/loki:latest
+    command:
+      - -config.file=/etc/loki/loki.yaml
+    volumes:
+      - loki-data:/loki
+      - ./lgtm/loki/loki.yaml:/etc/loki/loki.yaml:ro
+    networks:
+      - opentelemetry-demo
+
+  tempo:
+    image: grafana/tempo:latest
+    command:
+      - -config.file=/etc/tempo/tempo.yaml
+    volumes:
+      - tempo-data:/var/tempo
+      - ./lgtm/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+    networks:
+      - opentelemetry-demo
+
+  otel-collector:
+    command:
+      - "--config=/etc/otelcol-config.yml"
+      - "--config=/etc/otelcol-config-full.yml"
+      - "--config=/etc/otelcol-config-observability.yml"
+      - "--config=/etc/otelcol-config-lgtm.yml"
+      - "--config=/etc/otelcol-config-extras.yml"
+      - "--feature-gates=service.profilesSupport"
+
+    volumes:
+      - ${OTEL_COLLECTOR_CONFIG}:/etc/otelcol-config.yml
+      - ${OTEL_COLLECTOR_CONFIG_FULL}:/etc/otelcol-config-full.yml
+      - ${OTEL_COLLECTOR_CONFIG_OBSERVABILITY}:/etc/otelcol-config-observability.yml
+      - ./src/otel-collector/otelcol-config-lgtm.yml:/etc/otelcol-config-lgtm.yml:ro
+      - ${OTEL_COLLECTOR_CONFIG_EXTRAS}:/etc/otelcol-config-extras.yml
+
+    depends_on:
+      mimir:
+        condition: service_started
+      loki:
+        condition: service_started
+      tempo:
+        condition: service_started
+
+volumes:
+  mimir-data:
+  loki-data:
+  tempo-data:
+
+networks:
+  opentelemetry-demo:
+    external: true
