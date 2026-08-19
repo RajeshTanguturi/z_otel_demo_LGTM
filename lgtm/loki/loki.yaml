@@ -46,4 +46,5 @@ compactor:
   working_directory: /loki/compactor
 
   # Retention is disabled.
+  # Retention = how long Loki keeps stored logs before deleting them.
   retention_enabled: false
