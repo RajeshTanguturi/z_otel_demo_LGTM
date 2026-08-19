@@ -1,41 +1,149 @@
+# ============================================================
+# LGTM EXPORTERS
+#
+# Exporters define where the OpenTelemetry Collector sends
+# telemetry after it has been received and processed.
+# ============================================================
+
 exporters:
-  # Traces → Tempo
+
+  # ----------------------------------------------------------
+  # TRACES → TEMPO
+  # ----------------------------------------------------------
+  # "otlp/tempo" is the name we give this exporter.
+  #
+  # The exporter uses OTLP over gRPC to send trace data
+  # to the Tempo container on port 4317.
+  #
+  # Because Tempo is running in the same Docker network,
+  # "tempo" is resolved to the Tempo container.
   otlp/tempo:
     endpoint: tempo:4317
+
+    # Tempo's OTLP gRPC endpoint is running without TLS
+    # inside our local Docker network.
+    #
+    # insecure: true means:
+    #   "use an unencrypted gRPC connection"
+    #
+    # This is appropriate for this local learning setup,
+    # not something to copy blindly into production.
     tls:
       insecure: true
 
-  # Metrics → Mimir
+
+  # ----------------------------------------------------------
+  # METRICS → MIMIR
+  # ----------------------------------------------------------
+  # "otlphttp/mimir" is the exporter name.
+  #
+  # We use OTLP over HTTP to send metrics to Mimir.
+  #
+  # Mimir exposes its OTLP ingestion endpoint under /otlp.
   otlphttp/mimir:
     endpoint: http://mimir:9009/otlp
 
-  # Logs → Loki
+
+  # ----------------------------------------------------------
+  # LOGS → LOKI
+  # ----------------------------------------------------------
+  # "otlphttp/loki" sends logs using OTLP over HTTP.
+  #
+  # Loki exposes an OTLP endpoint under /otlp.
   otlphttp/loki:
     endpoint: http://loki:3100/otlp
+
+
+# ============================================================
+# SERVICE
+#
+# The service section connects:
+#
+#   receivers
+#       ↓
+#   processors
+#       ↓
+#   exporters
+#
+# A pipeline defines the complete path for one telemetry
+# signal.
+# ============================================================
 
 service:
   pipelines:
 
+    # ========================================================
+    # TRACES PIPELINE
+    # ========================================================
     traces:
       exporters:
+
+        # Keep the existing debug exporter.
+        # Useful for seeing trace data in Collector logs.
         - debug
+
+        # Keep the existing Jaeger exporter.
+        # This preserves the Demo's original tracing backend.
         - otlp_grpc/jaeger
+
+        # Send spans into the span_metrics connector.
+        #
+        # span_metrics converts information from spans into
+        # metrics, which are then consumed by the metrics
+        # pipeline.
         - span_metrics
+
+        # NEW:
+        # Send the same traces to Tempo.
         - otlp/tempo
 
+
+    # ========================================================
+    # METRICS PIPELINE
+    # ========================================================
     metrics:
       exporters:
+
+        # Keep Collector debug output.
         - debug
+
+        # Keep the existing Prometheus backend.
         - otlp_http/prometheus
+
+        # NEW:
+        # Send metrics to Mimir.
         - otlphttp/mimir
 
+
+    # ========================================================
+    # LOGS PIPELINE
+    # ========================================================
     logs:
       exporters:
+
+        # Keep Collector debug output.
         - debug
+
+        # Keep the existing OpenSearch backend.
         - opensearch
+
+        # NEW:
+        # Send logs to Loki.
         - otlphttp/loki
 
+
+    # ========================================================
+    # PROFILES PIPELINE
+    # ========================================================
     profiles:
       exporters:
+
+        # Keep the existing debug exporter.
         - debug
+
+        # Keep the existing Firepit exporter.
+        #
+        # We are not changing the Demo's profiling pipeline.
+        # We include it here because pipeline exporter arrays
+        # are replaced when this configuration is merged.
         - otlp_grpc/firepit
