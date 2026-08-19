@@ -1,32 +1,45 @@
+# Disable multi-tenancy.
 multitenancy_enabled: false
 
 server:
+  # Mimir HTTP API and OTLP port.
   http_listen_port: 9009
 
 blocks_storage:
+  # Store metric blocks on the local filesystem.
   backend: filesystem
   filesystem:
     dir: /data/mimir/blocks
 
 compactor:
+  # Directory used for compacting metric blocks.
   data_dir: /data/mimir/compactor
 
 distributor:
+  # Ring used by distributors to coordinate.
   ring:
+    # Store ring information using Mimir's memberlist.
     kvstore:
+    #Memberlist is a gossip-based mechanism that lets Mimir instances discover each other and share ring membership/state.
+    # alt: inmemory, consul, etcd 
       store: memberlist
 
 ingester:
   ring:
+    # Single-node lab: only 1 copy of the data.
     replication_factor: 1
+
+    # Use memberlist for ring coordination.
     kvstore:
       store: memberlist
 
 store_gateway:
   sharding_ring:
+    # Single-node lab: only one store-gateway replica.
     replication_factor: 1
 
 ruler_storage:
+  # Store alerting/recording rules on the local filesystem.
   backend: filesystem
   filesystem:
     dir: /data/mimir/rules
