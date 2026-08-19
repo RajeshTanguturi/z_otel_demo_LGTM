@@ -1,36 +1,103 @@
 services:
 
+  # ============================================================
+  # MIMIR - Metrics backend
+  # Receives metrics from the OpenTelemetry Collector.
+  # ============================================================
   mimir:
+    # Grafana Mimir image.
     image: grafana/mimir:latest
+
+    # Tell Mimir which configuration file to use.
     command:
       - -config.file=/etc/mimir/mimir.yaml
+
     volumes:
+      # Persistent storage for Mimir's metrics data.
       - mimir-data:/data/mimir
+
+      # Mount our local Mimir configuration into the container.
+      # :ro = read-only, so the container cannot modify the config.
       - ./lgtm/mimir/mimir.yaml:/etc/mimir/mimir.yaml:ro
+
+    # Put Mimir on the same Docker network as the Demo and Collector.
+    # This allows the Collector to reach it using:
+    # http://mimir:9009/otlp
     networks:
       - opentelemetry-demo
 
+
+  # ============================================================
+  # LOKI - Logs backend
+  # Receives logs from the OpenTelemetry Collector.
+  # ============================================================
   loki:
+    # Grafana Loki image.
     image: grafana/loki:latest
+
+    # Tell Loki which configuration file to use.
     command:
       - -config.file=/etc/loki/loki.yaml
+
     volumes:
+      # Persistent storage for Loki's log data.
       - loki-data:/loki
+
+      # Mount our local Loki configuration into the container.
       - ./lgtm/loki/loki.yaml:/etc/loki/loki.yaml:ro
+
+    # Join the existing Demo Docker network.
     networks:
       - opentelemetry-demo
 
+
+  # ============================================================
+  # TEMPO - Traces backend
+  # Receives traces from the OpenTelemetry Collector.
+  # ============================================================
   tempo:
+    # Grafana Tempo image.
     image: grafana/tempo:latest
+
+    # Tell Tempo which configuration file to use.
     command:
       - -config.file=/etc/tempo/tempo.yaml
+
     volumes:
+      # Persistent storage for Tempo's trace data.
       - tempo-data:/var/tempo
+
+      # Mount our local Tempo configuration into the container.
       - ./lgtm/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+
+    # Join the existing Demo Docker network.
     networks:
       - opentelemetry-demo
 
+
+  # ============================================================
+  # EXISTING OTEL COLLECTOR - Modified, not a new Collector
+  #
+  # This overrides the Demo's existing otel-collector service.
+  # We are NOT creating a second Collector.
+  # ============================================================
   otel-collector:
+
+    # The Collector loads multiple configuration files.
+    #
+    # They are processed in this order:
+    #
+    #   1. Base configuration
+    #   2. Full-mode configuration
+    #   3. Existing observability configuration
+    #   4. Our new LGTM configuration
+    #   5. Extra configuration
+    #
+    # Our LGTM layer adds Mimir, Loki and Tempo exporters.
+    #
+    # We repeat the complete command because Docker Compose
+    # treats "command" as a replace-type field rather than
+    # simply appending our new argument.
     command:
       - "--config=/etc/otelcol-config.yml"
       - "--config=/etc/otelcol-config-full.yml"
@@ -40,12 +107,29 @@ services:
       - "--feature-gates=service.profilesSupport"
 
     volumes:
+      # Existing/base Collector configuration.
       - ${OTEL_COLLECTOR_CONFIG}:/etc/otelcol-config.yml
+
+      # Existing full-mode configuration.
       - ${OTEL_COLLECTOR_CONFIG_FULL}:/etc/otelcol-config-full.yml
+
+      # Existing observability configuration
+      # containing Prometheus, OpenSearch and Jaeger exporters.
       - ${OTEL_COLLECTOR_CONFIG_OBSERVABILITY}:/etc/otelcol-config-observability.yml
+
+      # Our NEW Collector configuration.
+      # This adds the Mimir, Loki and Tempo exporters/pipelines.
+      # :ro = read-only.
       - ./src/otel-collector/otelcol-config-lgtm.yml:/etc/otelcol-config-lgtm.yml:ro
+
+      # Existing extra Collector configuration.
       - ${OTEL_COLLECTOR_CONFIG_EXTRAS}:/etc/otelcol-config-extras.yml
 
+    # Start the Collector only after the three LGTM services
+    # have started.
+    #
+    # This controls startup ordering; it does NOT mean the
+    # services are fully ready to receive telemetry.
     depends_on:
       mimir:
         condition: service_started
@@ -54,11 +138,34 @@ services:
       tempo:
         condition: service_started
 
+
+# ============================================================
+# PERSISTENT VOLUMES
+#
+# Named Docker volumes keep backend data outside the container
+# filesystem so data survives container recreation.
+# ============================================================
 volumes:
   mimir-data:
   loki-data:
   tempo-data:
 
+
+# ============================================================
+# NETWORK
+#
+# This network was already created by the OpenTelemetry Demo.
+#
+# external: true tells this Compose file:
+# "Use the existing network; do not create or manage another one."
+#
+# Because all services share this network, they can communicate
+# using Docker service names such as:
+#
+#   mimir:9009
+#   loki:3100
+#   tempo:4317
+# ============================================================
 networks:
   opentelemetry-demo:
     external: true
