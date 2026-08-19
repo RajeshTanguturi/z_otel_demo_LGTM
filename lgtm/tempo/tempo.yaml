@@ -1,18 +1,22 @@
 server:
+  # Tempo HTTP API and query port.
   http_listen_port: 3200
 
 distributor:
   receivers:
     otlp:
       protocols:
+        # Receive traces from the Collector using OTLP/gRPC.
         grpc:
           endpoint: 0.0.0.0:4317
+
+        # Receive traces using OTLP/HTTP.
         http:
           endpoint: 0.0.0.0:4318
 
 storage:
   trace:
+    # Store traces locally on the filesystem.
     backend: local
     local:
       path: /var/tempo/traces
-
